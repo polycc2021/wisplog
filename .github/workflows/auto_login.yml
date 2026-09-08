@@ -3,7 +3,7 @@ name: WispByte Auto Login
 on:
   schedule:
     # 每月 1 号和 15 号 UTC 08:00 (北京时间 16:00) 自动运行
-    - cron: '0 8 1,15 * *'
+    - cron: '0 5 1,15 * *'
   workflow_dispatch: # 支持在 GitHub 页面手动点击运行
 
 jobs:
