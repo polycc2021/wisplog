@@ -31,47 +31,54 @@ def run():
     telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not email or not password:
-        print("[错误] 缺少环境变量 WISP_EMAIL 或 WISP_PASSWORD，请先配置 GitHub Secrets！")
+        print("[错误] 缺少环境变量 WISP_EMAIL 或 WISP_PASSWORD！")
         sys.exit(1)
 
     print("正在启动无头浏览器...")
     with sync_playwright() as p:
+        # 添加防自动化识别参数，降低被 Cloudflare 拦截概率
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled"
+            ]
         )
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 720}
         )
         page = context.new_page()
 
         try:
             target_url = "https://wispbyte.com/client/account"
             print(f"正在访问登录页面: {target_url}")
-            page.goto(target_url, wait_until="networkidle", timeout=60000)
+            
+            # 改用 domcontentloaded，只要 DOM 树构建完成即可，不等待网络空闲
+            page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
 
-            # 匹配邮箱输入框
-            email_input = page.locator('input[type="email"], input[name="email"], input[name="username"]').first
-            email_input.wait_for(state="visible", timeout=15000)
-            email_input.fill(email)
+            print("等待登录表单渲染...")
+            email_selector = 'input[type="email"], input[name="email"], input[name="username"]'
+            page.wait_for_selector(email_selector, timeout=30000)
 
-            # 匹配密码输入框
-            password_input = page.locator('input[type="password"], input[name="password"]').first
-            password_input.wait_for(state="visible", timeout=15000)
-            password_input.fill(password)
+            # 填写表单
+            page.locator(email_selector).first.fill(email)
 
-            # 匹配登录按钮并点击
+            password_selector = 'input[type="password"], input[name="password"]'
+            page.locator(password_selector).first.fill(password)
+
+            # 点击登录
             submit_btn = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign In")').first
             submit_btn.click()
 
-            print("已提交登录，等待页面刷新响应...")
-            page.wait_for_load_state("networkidle", timeout=30000)
+            print("已提交登录，等待响应...")
+            page.wait_for_timeout(5000) # 等待 5 秒完成跳转
 
-            # 获取页面信息进行状态验证
             current_url = page.url
             content = page.content().lower()
 
-            # 判断是否登录成功 (不在登录页或包含控制台/退出特征词)
+            # 判断是否登录成功
             is_success = "login" not in current_url or "logout" in content or "dashboard" in content or "sign out" in content
 
             if is_success:
@@ -84,7 +91,7 @@ def run():
                 print(success_msg)
                 send_telegram_notification(telegram_token, telegram_chat_id, success_msg)
             else:
-                raise Exception("登录提交后页面未改变，可能遇到了密码错误或验证码阻挡。")
+                raise Exception("登录提交后页面未改变，可能是密码错误或触发了人机验证。")
 
         except Exception as e:
             error_msg = (
